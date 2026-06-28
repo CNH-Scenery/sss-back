@@ -72,6 +72,15 @@ class UserResponseListResponse(BaseModel):
     items: list[UserResponseItem] = Field(default_factory=list)
 
 
+class TwinContextSchema(BaseModel):
+    style_summary: str = Field(min_length=1)
+    important_signals: list[str] = Field(min_length=1)
+    avoid_conditions: list[str] = Field(min_length=1)
+    uncertainty: list[str] = Field(min_length=1)
+    decision_profile: dict[str, int] = Field(default_factory=dict)
+    confidence_profile: dict[str, float | str] = Field(default_factory=dict)
+
+
 class TwinContextGenerateResponse(BaseModel):
     context_id: str | None = None
     version: int | None = None

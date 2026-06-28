@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "verify:session0": "node scripts/verify-session0.mjs",
-    "verify:session2": "node scripts/verify-session2.mjs"
+    "verify:session2": "node scripts/verify-session2.mjs",
+    "verify:session3": "node scripts/verify-session3.mjs"
   },
   "dependencies": {
     "next": "^15.5.19",

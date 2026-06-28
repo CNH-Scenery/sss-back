@@ -1,5 +1,6 @@
 import type {
   ScenarioListResponse,
+  TwinContext,
   UserResponseListResponse,
   UserResponsePayload,
   UserResponseWriteResponse,
@@ -41,4 +42,24 @@ export async function submitUserResponse(
     throw new Error("Failed to save response");
   }
   return response.json() as Promise<UserResponseWriteResponse>;
+}
+
+export async function fetchLatestTwinContext(): Promise<TwinContext> {
+  const response = await fetch(`${apiBaseUrl}/api/twin-contexts/latest`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error("Failed to load twin context");
+  }
+  return response.json() as Promise<TwinContext>;
+}
+
+export async function generateTwinContext(): Promise<TwinContext> {
+  const response = await fetch(`${apiBaseUrl}/api/twin-contexts/generate`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error("Failed to generate twin context");
+  }
+  return response.json() as Promise<TwinContext>;
 }

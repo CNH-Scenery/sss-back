@@ -47,3 +47,12 @@ export type UserResponseListResponse = {
     preferred_action: string;
   }>;
 };
+
+export type TwinContext = {
+  context_id: string | null;
+  version: number | null;
+  style_summary: string | null;
+  important_signals: string[];
+  avoid_conditions: string[];
+  uncertainty: string[];
+};
