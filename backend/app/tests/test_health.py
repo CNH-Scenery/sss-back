@@ -25,3 +25,28 @@ def test_root_returns_api_landing_payload():
         "health": "/health",
         "scenarios": "/api/scenarios",
     }
+
+
+def test_vite_frontend_origin_is_allowed_for_auth_preflight():
+    client = TestClient(app)
+
+    response = client.options(
+        "/api/auth/login",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+
+
+def test_duplicate_slash_paths_are_normalized():
+    client = TestClient(app)
+
+    response = client.get("/api/auth//login")
+
+    assert response.status_code == 405
+    assert response.headers["allow"] == "POST"

@@ -1,12 +1,23 @@
 import os
+import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.requests import Request
 
 from app.api import api_router
 from app.db import initialize_database
+
+DEFAULT_CORS_ALLOWED_ORIGINS = ",".join(
+    [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+)
 
 
 @asynccontextmanager
@@ -18,10 +29,7 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
 app = FastAPI(title="CoinTwin API", lifespan=lifespan)
 allowed_origins = [
     origin.strip()
-    for origin in os.getenv(
-        "CORS_ALLOWED_ORIGINS",
-        "http://localhost:3000,http://127.0.0.1:3000",
-    ).split(",")
+    for origin in os.getenv("CORS_ALLOWED_ORIGINS", DEFAULT_CORS_ALLOWED_ORIGINS).split(",")
     if origin.strip()
 ]
 app.add_middleware(
@@ -30,6 +38,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def normalize_duplicate_slashes(request: Request, call_next):
+    normalized_path = re.sub(r"/{2,}", "/", request.scope["path"])
+    if normalized_path != request.scope["path"]:
+        request.scope["path"] = normalized_path
+    return await call_next(request)
+
+
 app.include_router(api_router)
 
 

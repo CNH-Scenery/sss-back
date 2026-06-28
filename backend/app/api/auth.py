@@ -33,6 +33,14 @@ def _token_response(user: User) -> AuthTokenResponse:
 def signup(payload: SignupRequest, session: Session = Depends(get_session)) -> AuthTokenResponse:
     existing = session.exec(select(User).where(User.email == payload.email)).first()
     if existing is not None:
+        if not existing.password_hash:
+            existing.nickname = payload.name
+            existing.password_hash = hash_password(payload.password)
+            session.add(existing)
+            session.commit()
+            session.refresh(existing)
+            return _token_response(existing)
+
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="이미 가입된 이메일입니다.")
 
     user = User(

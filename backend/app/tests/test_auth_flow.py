@@ -7,6 +7,7 @@ from sqlmodel import Session, create_engine
 
 from app.db import create_db_and_tables, get_session
 from app.main import app
+from app.models import User
 
 
 @pytest.fixture()
@@ -112,3 +113,30 @@ def test_me_requires_authentication(client: TestClient):
 
     assert missing.status_code == 401
     assert invalid.status_code == 401
+
+
+def test_signup_sets_password_for_legacy_email_only_user(client: TestClient):
+    session_generator = app.dependency_overrides[get_session]()
+    session = next(session_generator)
+    try:
+        session.add(User(nickname="Legacy User", email="legacy@example.com"))
+        session.commit()
+    finally:
+        session_generator.close()
+
+    signup = _signup(
+        client,
+        name="Recovered User",
+        email="legacy@example.com",
+        password="newsecret",
+    )
+    login = client.post(
+        "/api/auth/login",
+        json={"email": "legacy@example.com", "password": "newsecret"},
+    )
+
+    assert signup.status_code == 201
+    assert signup.json()["user"]["name"] == "Recovered User"
+    assert signup.json()["access_token"]
+    assert login.status_code == 200
+    assert login.json()["access_token"]
