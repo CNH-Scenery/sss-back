@@ -1,6 +1,6 @@
 # CoinTwin MVP
 
-CoinTwin is an MVP for turning a user's market-scenario judgments into a structured decision twin. Session 0 only creates the runnable project skeleton.
+CoinTwin is an MVP for turning a user's market-scenario judgments into a structured decision twin.
 
 ## Structure
 
@@ -17,6 +17,14 @@ docker-compose.yml
 cd backend
 python -m pytest app/tests -q
 ```
+
+The backend currently includes:
+
+- FastAPI `/health`
+- SQLModel table models for the MVP domain
+- anonymous user seed helper
+- OpenAPI-visible API contract stubs
+- model metadata and API contract tests
 
 ## Worker Startup Check
 
@@ -38,7 +46,7 @@ docker compose config
 docker compose up --build
 ```
 
-## Session 0 Scope
+## Current Scope
 
 Implemented:
 
@@ -48,11 +56,13 @@ Implemented:
 - Next.js first screen with backend health display
 - PostgreSQL, backend, backend-worker, frontend compose services
 - environment example
+- SQLModel table metadata
+- API contract stubs for scenarios, responses, twin contexts, strategies, backtests, feedbacks, watchlists, and signals
 
-Not implemented in Session 0:
+Not implemented yet:
 
-- database schema
 - LLM calls
 - Upbit calls
 - backtesting logic
 - survey flow
+- real database CRUD per API
