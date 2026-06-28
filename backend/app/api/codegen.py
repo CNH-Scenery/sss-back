@@ -1,6 +1,9 @@
+import json
+from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import HTMLResponse, StreamingResponse
 from sqlmodel import Session, select
 
 from app.db import get_session, seed_anonymous_user
@@ -9,6 +12,8 @@ from app.schemas import CodeGenerateRequest, CodeGenerateResponse
 from app.services.code_harness import CodeHarness
 
 router = APIRouter(prefix="/trading-code", tags=["TradingCode API"])
+
+_PLAYGROUND_HTML = Path(__file__).resolve().parent.parent / "static" / "codegen_playground.html"
 
 
 def get_harness() -> CodeHarness:
@@ -22,18 +27,11 @@ def generate_trading_code(
     harness: CodeHarness = Depends(get_harness),
 ) -> CodeGenerateResponse:
     user = seed_anonymous_user(session)
-    result = harness.run(
-        prompt=payload.prompt,
-        market=payload.market,
-        timeframe=payload.timeframe,
-        max_iterations=payload.max_iterations,
-    )
+    result = harness.run(prompt=payload.prompt, max_iterations=payload.max_iterations)
 
     record = GeneratedTradingCode(
         user_id=user.id,
         prompt=payload.prompt,
-        market=payload.market,
-        timeframe=payload.timeframe,
         code=result.code,
         status="passed" if result.passed else "failed",
         iterations=result.iterations,
@@ -44,6 +42,50 @@ def generate_trading_code(
     session.commit()
     session.refresh(record)
     return _to_response(record, result.report.decision_sample)
+
+
+@router.post("/generate/stream")
+def generate_trading_code_stream(
+    payload: CodeGenerateRequest,
+    session: Session = Depends(get_session),
+    harness: CodeHarness = Depends(get_harness),
+) -> StreamingResponse:
+    """Server-Sent Events variant of /generate: emits one event per loop step
+    (start, attempt_start, generated, verified, retry, done) so a client can
+    render each self-correction iteration live."""
+    user = seed_anonymous_user(session)
+
+    def event_stream():
+        for ev in harness.stream(prompt=payload.prompt, max_iterations=payload.max_iterations):
+            if ev.get("event") == "done":
+                record = GeneratedTradingCode(
+                    user_id=user.id,
+                    prompt=payload.prompt,
+                    code=ev["code"],
+                    status="passed" if ev["passed"] else "failed",
+                    iterations=ev["iterations"],
+                    model_name=ev["model_name"],
+                    verification_json=ev["report"],
+                )
+                session.add(record)
+                session.commit()
+                session.refresh(record)
+                ev = {**ev, "code_id": str(record.id)}
+            yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/playground", response_class=HTMLResponse, include_in_schema=False)
+def codegen_playground() -> HTMLResponse:
+    """Serve the self-correction loop visualizer (same origin → no CORS)."""
+    if not _PLAYGROUND_HTML.exists():
+        raise HTTPException(status_code=404, detail="playground html not found")
+    return HTMLResponse(_PLAYGROUND_HTML.read_text(encoding="utf-8"))
 
 
 @router.get("/latest", response_model=CodeGenerateResponse)

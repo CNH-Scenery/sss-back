@@ -227,8 +227,6 @@ class GeneratedTradingCode(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     user_id: UUID = Field(foreign_key="users.id")
     prompt: str
-    market: str
-    timeframe: str
     code: str
     status: str  # "passed" | "failed"
     iterations: int

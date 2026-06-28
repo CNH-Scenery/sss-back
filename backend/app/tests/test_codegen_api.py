@@ -34,7 +34,7 @@ def client(monkeypatch) -> Generator[TestClient, None, None]:
 def test_generate_trading_code_passes_in_fixture_mode(client: TestClient):
     response = client.post(
         "/api/trading-code/generate",
-        json={"prompt": "Buy when short MA crosses above long MA", "market": "KRW-BTC"},
+        json={"prompt": "Buy when short MA crosses above long MA"},
     )
     assert response.status_code == 200
     body = response.json()
@@ -42,14 +42,14 @@ def test_generate_trading_code_passes_in_fixture_mode(client: TestClient):
     assert body["status"] == "passed"
     assert body["model_name"] == "fixture"
     assert body["code_id"]
-    assert "def generate_signal" in body["code"]
-    assert body["decision_sample"]["action"] in {"buy", "sell", "hold"}
+    assert "__main__" in body["code"]
+    assert body["decision_sample"]["action"] in {"buy", "reject"}
 
 
 def test_latest_returns_the_generated_record(client: TestClient):
     client.post(
         "/api/trading-code/generate",
-        json={"prompt": "Mean reversion on RSI", "market": "KRW-ETH", "timeframe": "60m"},
+        json={"prompt": "Mean reversion on RSI"},
     )
 
     latest = client.get("/api/trading-code/latest")

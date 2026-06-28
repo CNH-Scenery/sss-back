@@ -1,17 +1,16 @@
 """Verifies LLM-generated trading code: static analysis + sandboxed execution.
 
 Two stages:
-  static_check  — parse the AST, enforce the import allowlist, reject forbidden
-                  symbols, and confirm the entrypoint is defined.
-  runtime_check — run the module in an isolated subprocess (`python -I`) with a CPU
-                  limit and wall-clock timeout, call generate_signal on sample input,
-                  and validate the returned dict against the TradingDecision contract.
+  static_check  — parse the AST, enforce the import allowlist, and reject forbidden
+                  symbols.
+  runtime_check — run the script in an isolated subprocess (`python -I`) with a CPU
+                  limit and wall-clock timeout, NO arguments, and confirm it prints
+                  exactly one decision token ("buy" or "reject") to stdout.
 
 Network access (httpx) is intentionally allowed per the data-access decision, so this
 is robustness verification, not a full security sandbox.
 """
 import ast
-import json
 import os
 import subprocess
 import sys
@@ -20,36 +19,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from pydantic import ValidationError
-
-from app.schemas import TradingDecision
-from app.services.code_contract import (
-    ALLOWED_IMPORTS,
-    ENTRYPOINT_NAME,
-    FORBIDDEN_NAMES,
-    SAMPLE_MARKET,
-    SAMPLE_TIMEFRAME,
-)
+from app.services.code_contract import ALLOWED_IMPORTS, DECISIONS, FORBIDDEN_NAMES
 
 RUNTIME_TIMEOUT_SECONDS = 20
 CPU_LIMIT_SECONDS = 15
-RESULT_MARKER = "__DECISION__"
-
-_RUNNER = f"""
-import sys, json, importlib.util
-path, market, timeframe = sys.argv[1], sys.argv[2], sys.argv[3]
-try:
-    spec = importlib.util.spec_from_file_location("strategy_mod", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    fn = getattr(mod, "{ENTRYPOINT_NAME}")
-    result = fn(market, timeframe)
-    print("{RESULT_MARKER}" + json.dumps(result, default=str))
-except Exception as exc:  # noqa: BLE001
-    import traceback
-    sys.stderr.write(traceback.format_exc())
-    sys.exit(3)
-"""
 
 
 @dataclass
@@ -91,15 +64,9 @@ def static_check(code: str) -> VerificationReport:
         elif isinstance(node, ast.Attribute) and node.attr in FORBIDDEN_NAMES:
             errors.append(f"forbidden attribute '.{node.attr}' is used")
 
-    has_entrypoint = any(
-        isinstance(n, ast.FunctionDef) and n.name == ENTRYPOINT_NAME for n in tree.body
-    )
-    if not has_entrypoint:
-        errors.append(f"module must define a top-level '{ENTRYPOINT_NAME}' function")
-
     # De-duplicate while preserving order.
     errors = list(dict.fromkeys(errors))
-    return VerificationReport(passed=not errors and has_entrypoint, stage="static", errors=errors)
+    return VerificationReport(passed=not errors, stage="static", errors=errors)
 
 
 def _limit_resources() -> None:
@@ -111,21 +78,18 @@ def _limit_resources() -> None:
         pass
 
 
-def runtime_check(
-    code: str,
-    market: str = SAMPLE_MARKET,
-    timeframe: str = SAMPLE_TIMEFRAME,
-) -> VerificationReport:
+def runtime_check(code: str) -> VerificationReport:
+    """Run the script with no arguments and confirm it prints exactly buy/reject."""
     with tempfile.TemporaryDirectory() as tmp:
-        strategy_path = Path(tmp) / "strategy_mod.py"
+        strategy_path = Path(tmp) / "strategy_script.py"
         strategy_path.write_text(code, encoding="utf-8")
         subprocess_kwargs = {}
-        if os.name != "nt":
+        if os.name != "nt":  # preexec_fn is POSIX-only
             subprocess_kwargs["preexec_fn"] = _limit_resources
 
         try:
             proc = subprocess.run(
-                [sys.executable, "-I", "-c", _RUNNER, str(strategy_path), market, timeframe],
+                [sys.executable, "-I", str(strategy_path)],
                 capture_output=True,
                 text=True,
                 timeout=RUNTIME_TIMEOUT_SECONDS,
@@ -144,34 +108,32 @@ def runtime_check(
                 stdout=proc.stderr or proc.stdout,
             )
 
-        line = next(
-            (ln for ln in proc.stdout.splitlines() if ln.startswith(RESULT_MARKER)), None
-        )
-        if line is None:
+        decision = _last_token(proc.stdout)
+        if decision not in DECISIONS:
             return VerificationReport(
-                False, "runtime", ["no decision returned by generate_signal"], stdout=proc.stdout
-            )
-
-        raw = line[len(RESULT_MARKER):]
-        try:
-            payload = json.loads(raw)
-            decision = TradingDecision.model_validate(payload)
-        except (json.JSONDecodeError, ValidationError) as exc:
-            return VerificationReport(
-                False, "runtime", [f"decision did not match contract: {exc}"], stdout=proc.stdout
+                False,
+                "runtime",
+                [f"script must print exactly one of {list(DECISIONS)}; got: {decision!r}"],
+                stdout=proc.stdout,
             )
 
         return VerificationReport(
             passed=True,
             stage="ok",
-            decision_sample=decision.model_dump(),
+            decision_sample={"action": decision},
             stdout=proc.stdout,
         )
 
 
-def verify(code: str, market: str = SAMPLE_MARKET, timeframe: str = SAMPLE_TIMEFRAME) -> VerificationReport:
+def _last_token(stdout: str) -> str | None:
+    """The decision is the last non-empty line, lowercased and stripped."""
+    lines = [ln.strip() for ln in stdout.splitlines() if ln.strip()]
+    return lines[-1].lower() if lines else None
+
+
+def verify(code: str) -> VerificationReport:
     """Run static then runtime checks; return the first failure or the runtime success."""
     static = static_check(code)
     if not static.passed:
         return static
-    return runtime_check(code, market, timeframe)
+    return runtime_check(code)

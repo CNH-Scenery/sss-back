@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CoinTwin · 코드 생성 루프 시각화</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #181b24; --panel2: #1f2330; --border: #2b3040;
+    --text: #e6e8ee; --muted: #9aa3b2; --accent: #5b9dff;
+    --ok: #3ecf8e; --fail: #ff6b6b; --warn: #ffb454;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", sans-serif;
+    line-height: 1.5;
+  }
+  header { padding: 20px 24px; border-bottom: 1px solid var(--border); }
+  header h1 { margin: 0; font-size: 18px; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  .wrap { display: grid; grid-template-columns: 340px 1fr; gap: 0; min-height: calc(100vh - 70px); }
+  .controls { padding: 20px 24px; border-right: 1px solid var(--border); }
+  .timeline { padding: 20px 24px; overflow-x: hidden; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 14px 0 5px; }
+  input, textarea, select {
+    width: 100%; background: var(--panel2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px;
+    font-size: 13px; font-family: inherit;
+  }
+  textarea { resize: vertical; min-height: 80px; }
+  button {
+    margin-top: 18px; width: 100%; background: var(--accent); color: #06122b;
+    border: 0; border-radius: 8px; padding: 11px; font-size: 14px; font-weight: 700;
+    cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .meta { margin-top: 16px; font-size: 12px; color: var(--muted); }
+  .meta code { color: var(--text); font-family: var(--mono); }
+
+  .step {
+    border: 1px solid var(--border); border-radius: 12px; margin-bottom: 14px;
+    background: var(--panel); overflow: hidden;
+  }
+  .step.attempt { border-left: 3px solid var(--accent); }
+  .step.pass { border-left: 3px solid var(--ok); }
+  .step.fail { border-left: 3px solid var(--fail); }
+  .step-head {
+    display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+    cursor: pointer; user-select: none;
+  }
+  .step-head .badge {
+    font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+    background: var(--panel2); color: var(--muted); white-space: nowrap;
+  }
+  .badge.ok { background: rgba(62,207,142,.15); color: var(--ok); }
+  .badge.fail { background: rgba(255,107,107,.15); color: var(--fail); }
+  .badge.warn { background: rgba(255,180,84,.15); color: var(--warn); }
+  .badge.accent { background: rgba(91,157,255,.15); color: var(--accent); }
+  .step-title { font-size: 14px; font-weight: 600; flex: 1; }
+  .step-sub { font-size: 12px; color: var(--muted); }
+  .step-body { padding: 0 16px 14px; display: none; }
+  .step.open .step-body { display: block; }
+  .chevron { color: var(--muted); font-size: 12px; transition: transform .15s; }
+  .step.open .chevron { transform: rotate(90deg); }
+
+  pre {
+    background: #0b0d13; border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px; overflow: auto; font-family: var(--mono); font-size: 12px;
+    margin: 8px 0 0; max-height: 360px;
+  }
+  .errlist { margin: 8px 0 0; padding-left: 18px; }
+  .errlist li { color: var(--fail); font-size: 13px; font-family: var(--mono); }
+  .kv { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .kv b { color: var(--text); font-weight: 600; }
+  .spinner {
+    width: 13px; height: 13px; border: 2px solid var(--border);
+    border-top-color: var(--accent); border-radius: 50%;
+    display: inline-block; animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .empty { color: var(--muted); font-size: 13px; margin-top: 40px; text-align: center; }
+  .summary {
+    border-radius: 12px; padding: 16px; margin-bottom: 16px; border: 1px solid var(--border);
+    background: var(--panel2);
+  }
+  .summary h2 { margin: 0 0 8px; font-size: 15px; }
+  details summary { cursor: pointer; color: var(--accent); font-size: 12px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔁 코드 생성 자기수정 루프 시각화</h1>
+  <p>POST <code>/api/trading-code/generate/stream</code> — 생성 → 검증 → (실패 시) 에러 피드백 → 재시도</p>
+</header>
+
+<div class="wrap">
+  <form class="controls" id="form">
+    <label for="prompt">프롬프트 (전략 설명)</label>
+    <textarea id="prompt" name="prompt">5일/20일 이동평균 골든크로스면 매수, 아니면 거절</textarea>
+
+    <label for="max_iterations">최대 반복 횟수 (max_iterations)</label>
+    <input id="max_iterations" name="max_iterations" type="number" min="1" max="10" value="4" />
+
+    <button id="run" type="submit">생성 시작</button>
+    <div class="meta" id="meta">
+      마켓·타임프레임 등은 프롬프트만 보고 LLM이 코드 안에서 스스로 정합니다.
+      생성된 코드는 인자 없이 실행되면 <b>buy</b> 또는 <b>reject</b>만 출력합니다.
+    </div>
+  </form>
+
+  <section class="timeline" id="timeline">
+    <div class="empty" id="empty">왼쪽에서 값을 입력하고 <b>생성 시작</b>을 누르세요.</div>
+  </section>
+</div>
+
+<script>
+const form = document.getElementById("form");
+const runBtn = document.getElementById("run");
+const timeline = document.getElementById("timeline");
+const empty = document.getElementById("empty");
+const meta = document.getElementById("meta");
+
+const esc = (s) => String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+
+function clearTimeline() {
+  timeline.innerHTML = "";
+}
+
+function addStep({ cls, badge, badgeCls, title, sub, bodyHtml, open }) {
+  const div = document.createElement("div");
+  div.className = "step " + (cls || "");
+  if (open) div.classList.add("open");
+  div.innerHTML = `
+    <div class="step-head">
+      <span class="chevron">▶</span>
+      ${badge ? `<span class="badge ${badgeCls || ""}">${badge}</span>` : ""}
+      <span class="step-title">${title}</span>
+      <span class="step-sub">${sub || ""}</span>
+    </div>
+    <div class="step-body">${bodyHtml || ""}</div>`;
+  div.querySelector(".step-head").addEventListener("click", () => div.classList.toggle("open"));
+  timeline.appendChild(div);
+  div.scrollIntoView({ behavior: "smooth", block: "end" });
+  return div;
+}
+
+// per-attempt placeholder so generated/verified events update the same card group
+const attempts = {};
+
+function handleEvent(ev) {
+  switch (ev.event) {
+    case "start":
+      meta.innerHTML = `모델 <code>${esc(ev.model_name)}</code> · 최대 <b>${ev.limit}</b>회`;
+      addStep({
+        cls: "", badge: "START", badgeCls: "accent",
+        title: "루프 시작",
+        sub: "",
+        bodyHtml: `<div class="kv"><b>프롬프트</b><br>${esc(ev.prompt)}</div>`,
+      });
+      break;
+
+    case "attempt_start": {
+      const card = addStep({
+        cls: "attempt", badge: `시도 ${ev.attempt}/${ev.limit}`, badgeCls: "accent",
+        title: `<span class="spinner"></span> LLM 코드 생성 중…`,
+        sub: "", open: true,
+        bodyHtml: `<div class="kv">응답 대기 중…</div>`,
+      });
+      attempts[ev.attempt] = card;
+      break;
+    }
+
+    case "generated": {
+      const card = attempts[ev.attempt];
+      const lines = (ev.code || "").split("\n").length;
+      if (card) {
+        card.querySelector(".step-title").innerHTML = `시도 ${ev.attempt} · 코드 생성 완료`;
+        card.querySelector(".step-sub").textContent = `${(ev.code||"").length}자 · ${lines}줄`;
+        card.querySelector(".step-body").innerHTML =
+          `<div class="kv"><b>생성된 코드</b></div><pre>${esc(ev.code)}</pre>`;
+      }
+      break;
+    }
+
+    case "verified": {
+      const ok = ev.passed;
+      const decision = ev.decision_sample && ev.decision_sample.action;
+      let body = `<div class="kv"><b>단계</b>: ${esc(ev.stage)} · <b>결과</b>: ${ok ? "통과" : "실패"}</div>`;
+      if (decision) {
+        const dcls = decision === "buy" ? "ok" : "warn";
+        body += `<div class="kv" style="margin-top:10px"><b>실행 출력</b>: ` +
+          `<span class="badge ${dcls}" style="font-size:13px">${esc(decision).toUpperCase()}</span></div>`;
+      }
+      if (ev.errors && ev.errors.length) {
+        body += `<div class="kv"><b>검증 에러</b></div><ul class="errlist">` +
+          ev.errors.map(e => `<li>${esc(e)}</li>`).join("") + `</ul>`;
+      }
+      if (ev.stdout) {
+        body += `<details><summary>stdout/stderr</summary><pre>${esc(ev.stdout)}</pre></details>`;
+      }
+      addStep({
+        cls: ok ? "pass" : "fail",
+        badge: ok ? "검증 통과" : "검증 실패",
+        badgeCls: ok ? "ok" : "fail",
+        title: `시도 ${ev.attempt} · 검증 (${esc(ev.stage)})`,
+        sub: "", open: true, bodyHtml: body,
+      });
+      break;
+    }
+
+    case "retry":
+      addStep({
+        cls: "", badge: "재시도", badgeCls: "warn",
+        title: `에러를 피드백하고 다음 시도로 →`,
+        sub: `${(ev.errors||[]).length}개 에러 전달`,
+      });
+      break;
+
+    case "error":
+      addStep({
+        cls: "fail", badge: "오류", badgeCls: "fail",
+        title: `시도 ${ev.attempt} · 생성 실패`,
+        sub: "", open: true,
+        bodyHtml: `<pre>${esc(ev.message)}</pre>`,
+      });
+      break;
+
+    case "done": {
+      const ok = ev.passed;
+      const div = document.createElement("div");
+      div.className = "summary";
+      div.style.borderColor = ok ? "var(--ok)" : "var(--fail)";
+      const decision = ev.decision_sample && ev.decision_sample.action;
+      const dcls = decision === "buy" ? "ok" : "warn";
+      div.innerHTML = `
+        <h2>${ok ? "✅ 성공" : "❌ 실패"} ·
+          <span class="badge ${ok ? "ok" : "fail"}">${ev.iterations}회 만에 종료</span></h2>
+        ${decision ? `<div class="kv"><b>실행 출력</b>: <span class="badge ${dcls}" style="font-size:14px">${esc(decision).toUpperCase()}</span></div>` : ""}
+        <div class="kv"><b>모델</b>: ${esc(ev.model_name)}</div>
+        ${ev.code_id ? `<div class="kv"><b>code_id</b>: <code>${esc(ev.code_id)}</code></div>` : ""}
+        <details><summary>최종 코드 보기</summary><pre>${esc(ev.code)}</pre></details>`;
+      timeline.prepend(div);
+      div.scrollIntoView({ behavior: "smooth", block: "start" });
+      break;
+    }
+  }
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  runBtn.disabled = true;
+  runBtn.textContent = "실행 중…";
+  empty.style.display = "none";
+  clearTimeline();
+
+  const payload = {
+    prompt: document.getElementById("prompt").value,
+    max_iterations: parseInt(document.getElementById("max_iterations").value, 10) || null,
+  };
+
+  try {
+    const resp = await fetch("generate/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok) throw new Error("HTTP " + resp.status + " " + (await resp.text()));
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const chunk = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const line = chunk.split("\n").find(l => l.startsWith("data:"));
+        if (!line) continue;
+        try { handleEvent(JSON.parse(line.slice(5).trim())); }
+        catch (err) { console.error("parse error", err, line); }
+      }
+    }
+  } catch (err) {
+    addStep({ cls: "fail", badge: "요청 오류", badgeCls: "fail",
+      title: "스트리밍 실패", sub: "", open: true, bodyHtml: `<pre>${esc(err.message)}</pre>` });
+  } finally {
+    runBtn.disabled = false;
+    runBtn.textContent = "생성 시작";
+  }
+});
+</script>
+</body>
+</html>

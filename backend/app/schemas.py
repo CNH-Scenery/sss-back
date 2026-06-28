@@ -216,8 +216,6 @@ class TradingDecision(BaseModel):
 
 class CodeGenerateRequest(BaseModel):
     prompt: str = Field(min_length=1)
-    market: str = "KRW-BTC"
-    timeframe: str = "15m"
     max_iterations: int | None = Field(default=None, ge=1, le=10)
 
 

@@ -11,41 +11,35 @@ from app.services.code_contract import SYSTEM_PROMPT
 
 DEFAULT_MODEL = "claude-opus-4-8"
 
-# A known-good module returned in fixture mode. It satisfies the full contract:
-# fetches Upbit candles via httpx and returns a validated decision dict.
+# A known-good script returned in fixture mode. It satisfies the contract: runs with
+# no arguments, fetches Upbit candles via httpx, and prints exactly "buy" or "reject".
 FIXTURE_CODE = '''\
 import httpx
 
-_UNIT = {"15m": 15, "60m": 60}
 
-
-def generate_signal(market: str, timeframe: str = "15m") -> dict:
-    unit = _UNIT.get(timeframe, 15)
-    url = f"https://api.upbit.com/v1/candles/minutes/{unit}"
+def _decide() -> str:
+    url = "https://api.upbit.com/v1/candles/minutes/15"
     try:
         with httpx.Client(timeout=10) as client:
-            resp = client.get(url, params={"market": market, "count": 50})
+            resp = client.get(url, params={"market": "KRW-BTC", "count": 50})
             resp.raise_for_status()
             candles = resp.json()
-    except Exception as exc:  # noqa: BLE001
-        return {"action": "hold", "size_ratio": 0.0, "reason": f"fetch failed: {exc}", "indicators": {}}
+    except Exception:
+        return "reject"
 
     closes = [float(c["trade_price"]) for c in candles]
     if len(closes) < 20:
-        return {"action": "hold", "size_ratio": 0.0, "reason": "insufficient data", "indicators": {}}
+        return "reject"
 
     # Upbit returns newest-first; reverse to chronological order.
     closes = closes[::-1]
     short_ma = sum(closes[-5:]) / 5
     long_ma = sum(closes[-20:]) / 20
-    last = closes[-1]
+    return "buy" if short_ma > long_ma else "reject"
 
-    indicators = {"short_ma": short_ma, "long_ma": long_ma, "last": last}
-    if short_ma > long_ma * 1.001:
-        return {"action": "buy", "size_ratio": 0.2, "reason": "short MA crossed above long MA", "indicators": indicators}
-    if short_ma < long_ma * 0.999:
-        return {"action": "sell", "size_ratio": 0.2, "reason": "short MA crossed below long MA", "indicators": indicators}
-    return {"action": "hold", "size_ratio": 0.0, "reason": "no clear trend", "indicators": indicators}
+
+if __name__ == "__main__":
+    print(_decide())
 '''
 
 
