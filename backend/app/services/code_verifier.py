@@ -12,6 +12,7 @@ is robustness verification, not a full security sandbox.
 """
 import ast
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -118,6 +119,9 @@ def runtime_check(
     with tempfile.TemporaryDirectory() as tmp:
         strategy_path = Path(tmp) / "strategy_mod.py"
         strategy_path.write_text(code, encoding="utf-8")
+        subprocess_kwargs = {}
+        if os.name != "nt":
+            subprocess_kwargs["preexec_fn"] = _limit_resources
 
         try:
             proc = subprocess.run(
@@ -125,7 +129,7 @@ def runtime_check(
                 capture_output=True,
                 text=True,
                 timeout=RUNTIME_TIMEOUT_SECONDS,
-                preexec_fn=_limit_resources,
+                **subprocess_kwargs,
             )
         except subprocess.TimeoutExpired:
             return VerificationReport(

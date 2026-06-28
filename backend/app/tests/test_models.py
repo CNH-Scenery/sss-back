@@ -1,3 +1,4 @@
+from sqlalchemy import inspect, text
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.db import create_db_and_tables, normalize_database_url, seed_anonymous_user
@@ -36,6 +37,36 @@ def test_create_tables_and_seed_anonymous_user_is_idempotent():
     assert first.id == second.id
     assert len(users) == 1
     assert users[0].nickname == "anonymous"
+
+
+def test_create_tables_migrates_legacy_users_auth_columns():
+    engine = create_engine("sqlite:///:memory:")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE users (
+                    id CHAR(32) PRIMARY KEY,
+                    nickname VARCHAR,
+                    risk_profile VARCHAR,
+                    default_timeframe VARCHAR,
+                    created_at DATETIME
+                )
+                """
+            )
+        )
+
+    create_db_and_tables(engine)
+
+    columns = {column["name"] for column in inspect(engine).get_columns("users")}
+    indexes = {index["name"] for index in inspect(engine).get_indexes("users")}
+    assert {"email", "password_hash"}.issubset(columns)
+    assert "ix_users_email" in indexes
+
+    with Session(engine) as session:
+        user = seed_anonymous_user(session)
+
+    assert user.nickname == "anonymous"
 
 
 def test_required_constraints_are_named_in_metadata():

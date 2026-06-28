@@ -1,6 +1,7 @@
 import os
 from collections.abc import Generator
 
+from sqlalchemy import inspect, text
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.models import User
@@ -25,6 +26,25 @@ engine = get_engine(os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL))
 
 def create_db_and_tables(engine) -> None:
     SQLModel.metadata.create_all(engine)
+    ensure_auth_user_columns(engine)
+
+
+def ensure_auth_user_columns(engine) -> None:
+    inspector = inspect(engine)
+    if "users" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("users")}
+    statements = []
+    if "email" not in columns:
+        statements.append("ALTER TABLE users ADD COLUMN email VARCHAR")
+    if "password_hash" not in columns:
+        statements.append("ALTER TABLE users ADD COLUMN password_hash VARCHAR")
+
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)"))
 
 
 def get_session() -> Generator[Session, None, None]:
