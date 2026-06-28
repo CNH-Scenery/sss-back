@@ -1,6 +1,6 @@
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from app.db import create_db_and_tables, seed_anonymous_user
+from app.db import create_db_and_tables, normalize_database_url, seed_anonymous_user
 from app.models import User
 
 
@@ -50,3 +50,14 @@ def test_required_constraints_are_named_in_metadata():
     assert "uq_twin_strategy_version" in strategy_index_names
     assert "uq_active_strategy_per_user" in strategy_index_names
     assert "uq_signal_dedup_key" in signal_constraint_names
+
+
+def test_railway_postgres_url_uses_psycopg_driver():
+    assert (
+        normalize_database_url("postgresql://user:pass@host:5432/db")
+        == "postgresql+psycopg://user:pass@host:5432/db"
+    )
+    assert (
+        normalize_database_url("postgresql+psycopg://user:pass@host:5432/db")
+        == "postgresql+psycopg://user:pass@host:5432/db"
+    )

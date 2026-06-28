@@ -8,8 +8,14 @@ from app.models import User
 DEFAULT_DATABASE_URL = "sqlite:///./cointwin.db"
 
 
+def normalize_database_url(database_url: str) -> str:
+    if database_url.startswith("postgresql://"):
+        return database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return database_url
+
+
 def get_engine(database_url: str | None = None):
-    url = database_url or DEFAULT_DATABASE_URL
+    url = normalize_database_url(database_url or DEFAULT_DATABASE_URL)
     connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
     return create_engine(url, connect_args=connect_args)
 
