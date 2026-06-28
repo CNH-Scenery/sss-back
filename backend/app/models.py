@@ -16,6 +16,8 @@ class User(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     nickname: str | None = None
+    email: str | None = Field(default=None, unique=True, index=True)
+    password_hash: str | None = None
     risk_profile: str | None = None
     default_timeframe: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
@@ -216,4 +218,20 @@ class SimulatedOrder(SQLModel, table=True):
     size_ratio: float
     simulated_amount: Decimal
     status: str
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class GeneratedTradingCode(SQLModel, table=True):
+    __tablename__ = "generated_trading_codes"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    user_id: UUID = Field(foreign_key="users.id")
+    prompt: str
+    market: str
+    timeframe: str
+    code: str
+    status: str  # "passed" | "failed"
+    iterations: int
+    model_name: str
+    verification_json: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=utc_now)

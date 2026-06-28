@@ -5,6 +5,9 @@ from app.main import app
 
 EXPECTED_PATHS = {
     "/health",
+    "/api/auth/signup",
+    "/api/auth/login",
+    "/api/auth/me",
     "/api/scenarios",
     "/api/responses",
     "/api/responses/me",

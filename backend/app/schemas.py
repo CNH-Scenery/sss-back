@@ -1,8 +1,11 @@
+import re
 from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
 class Decision(StrEnum):
@@ -28,6 +31,50 @@ class FeedbackType(StrEnum):
 
 class MessageResponse(BaseModel):
     message: str
+
+
+class SignupRequest(BaseModel):
+    name: str = Field(min_length=1)
+    email: str
+    password: str = Field(min_length=8)
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("이름을 입력하세요.")
+        return value
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not EMAIL_PATTERN.match(value):
+            raise ValueError("올바른 이메일 형식이 아닙니다.")
+        return value
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: str) -> str:
+        return value.strip().lower()
+
+
+class UserPublic(BaseModel):
+    id: str
+    name: str | None = None
+    email: str | None = None
+
+
+class AuthTokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserPublic
 
 
 class ScenarioItem(BaseModel):
@@ -148,6 +195,41 @@ class WatchlistCreate(BaseModel):
     market: str
     timeframe: str
     cooldown_minutes: int = Field(ge=1, le=1440)
+
+
+class TradingDecision(BaseModel):
+    """Contract the generated code must return when called (validated by the harness)."""
+
+    action: str
+    size_ratio: float = Field(ge=0, le=1)
+    reason: str = ""
+    indicators: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("action")
+    @classmethod
+    def _action_allowed(cls, value: str) -> str:
+        allowed = {"buy", "sell", "hold"}
+        if value not in allowed:
+            raise ValueError(f"action must be one of {sorted(allowed)}")
+        return value
+
+
+class CodeGenerateRequest(BaseModel):
+    prompt: str = Field(min_length=1)
+    market: str = "KRW-BTC"
+    timeframe: str = "15m"
+    max_iterations: int | None = Field(default=None, ge=1, le=10)
+
+
+class CodeGenerateResponse(BaseModel):
+    code_id: str | None = None
+    status: str
+    passed: bool
+    iterations: int
+    model_name: str
+    code: str
+    verification: dict[str, Any]
+    decision_sample: dict[str, Any] | None = None
 
 
 class SignalListResponse(BaseModel):
