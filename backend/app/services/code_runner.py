@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from app.schemas import Decision
+from app.schemas import TradingDecision
 from app.services import strategy_engine
 
 
@@ -28,7 +28,7 @@ def run_once(code: str, features: dict[str, Any], position: dict[str, Any] | Non
     if not probe.get("ok"):
         return RunOutcome("error", None, probe.get("error", "decide raised"))
     try:
-        decision = Decision.model_validate(probe["decision"])
+        decision = TradingDecision.model_validate(probe["decision"])
     except ValidationError as exc:
         return RunOutcome("error", None, f"decision does not match contract: {exc}")
     return RunOutcome("ok", decision.model_dump(), None)

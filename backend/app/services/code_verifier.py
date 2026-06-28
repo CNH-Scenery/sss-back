@@ -12,7 +12,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from app.schemas import Decision
+from app.schemas import TradingDecision
 from app.services import strategy_engine
 from app.services.code_contract import (
     ALLOWED_IMPORTS,
@@ -90,7 +90,7 @@ def runtime_check(code: str) -> VerificationReport:
             errors.append(f"{label}: decide raised — {probe.get('error')}")
             continue
         try:
-            decision = Decision.model_validate(probe["decision"])
+            decision = TradingDecision.model_validate(probe["decision"])
         except ValidationError as exc:
             errors.append(f"{label}: decision does not match contract — {exc}")
             continue
