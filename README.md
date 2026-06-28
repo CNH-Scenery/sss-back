@@ -41,6 +41,14 @@ node scripts/verify-session0.mjs
 
 ## Docker Compose
 
+Create a local environment file before running compose:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Set `LLM_API_KEY` in `.env`. The real `.env` file is ignored by git and must not be committed.
+
 ```powershell
 docker compose config
 docker compose up --build

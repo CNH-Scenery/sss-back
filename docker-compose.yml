@@ -2,9 +2,9 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: cointwin
-      POSTGRES_PASSWORD: cointwin
-      POSTGRES_DB: cointwin
+      POSTGRES_USER: ${POSTGRES_USER:-cointwin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cointwin}
+      POSTGRES_DB: ${POSTGRES_DB:-cointwin}
     ports:
       - "5432:5432"
     volumes:
@@ -19,7 +19,11 @@ services:
     build:
       context: ./backend
     environment:
-      DATABASE_URL: postgresql+psycopg://cointwin:cointwin@postgres:5432/cointwin
+      DATABASE_URL: ${BACKEND_DATABASE_URL:-postgresql+psycopg://cointwin:cointwin@postgres:5432/cointwin}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.scenery.today/v1}
+      LLM_MODEL: ${LLM_MODEL:-codex-5.5-extrahigh}
     ports:
       - "8000:8000"
     depends_on:
@@ -30,7 +34,10 @@ services:
     build:
       context: ./backend-worker
     environment:
-      DATABASE_URL: postgresql+psycopg://cointwin:cointwin@postgres:5432/cointwin
+      DATABASE_URL: ${BACKEND_DATABASE_URL:-postgresql+psycopg://cointwin:cointwin@postgres:5432/cointwin}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.scenery.today/v1}
+      LLM_MODEL: ${LLM_MODEL:-codex-5.5-extrahigh}
     command: ["python", "worker.py", "--once"]
     depends_on:
       postgres:
@@ -40,7 +47,7 @@ services:
     build:
       context: ./frontend
     environment:
-      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
     ports:
       - "3000:3000"
     depends_on:
