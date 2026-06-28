@@ -19,7 +19,7 @@ services:
     build:
       context: ./backend
     environment:
-      DATABASE_URL: postgresql://cointwin:cointwin@postgres:5432/cointwin
+      DATABASE_URL: postgresql+psycopg://cointwin:cointwin@postgres:5432/cointwin
     ports:
       - "8000:8000"
     depends_on:
@@ -30,7 +30,7 @@ services:
     build:
       context: ./backend-worker
     environment:
-      DATABASE_URL: postgresql://cointwin:cointwin@postgres:5432/cointwin
+      DATABASE_URL: postgresql+psycopg://cointwin:cointwin@postgres:5432/cointwin
     command: ["python", "worker.py", "--once"]
     depends_on:
       postgres:
@@ -40,7 +40,7 @@ services:
     build:
       context: ./frontend
     environment:
-      NEXT_PUBLIC_API_BASE_URL: http://backend:8000
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
     ports:
       - "3000:3000"
     depends_on:

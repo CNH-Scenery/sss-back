@@ -35,6 +35,7 @@ class ScenarioItem(BaseModel):
     market: str
     timeframe: str
     description: str
+    features_snapshot: dict[str, Any] = Field(default_factory=dict)
     chart_data: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -48,6 +49,27 @@ class UserResponseCreate(BaseModel):
     natural_reason: str
     confidence: float = Field(ge=0, le=1)
     preferred_action: str
+
+
+class UserResponseItem(BaseModel):
+    id: str
+    scenario_id: str
+    decision: Decision
+    natural_reason: str
+    confidence: float
+    preferred_action: str
+
+
+class UserResponseWriteResponse(BaseModel):
+    response_id: str
+    response_count: int
+    can_generate_twin: bool
+
+
+class UserResponseListResponse(BaseModel):
+    response_count: int
+    can_generate_twin: bool
+    items: list[UserResponseItem] = Field(default_factory=list)
 
 
 class TwinContextGenerateResponse(BaseModel):
