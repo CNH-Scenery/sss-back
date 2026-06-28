@@ -66,6 +66,67 @@ class UpbitClient:
         response = self._get(f"/v1/candles/minutes/{unit}", params=params)
         return [self._normalize_candle(item, unit) for item in response.json()]
 
+    def get_ticker(self, markets: list[str]) -> list[dict[str, Any]]:
+        if not markets:
+            raise ValueError("markets must not be empty")
+        response = self._get("/v1/ticker", params={"markets": ",".join(markets)})
+        return [
+            {
+                "market": item["market"],
+                "trade_price": float(item["trade_price"]),
+                "change": item.get("change"),
+                "change_rate_24h": float(item.get("signed_change_rate", 0.0)),
+                "high_price": float(item["high_price"]),
+                "low_price": float(item["low_price"]),
+                "acc_trade_price_24h": float(item.get("acc_trade_price_24h", 0.0)),
+                "acc_trade_volume_24h": float(item.get("acc_trade_volume_24h", 0.0)),
+            }
+            for item in response.json()
+        ]
+
+    def get_orderbook(self, market: str, depth: int = 5) -> dict[str, Any]:
+        response = self._get("/v1/orderbook", params={"markets": market})
+        data = response.json()
+        if not data:
+            raise ValueError(f"no orderbook for {market}")
+        book = data[0]
+        units = book.get("orderbook_units", [])[: max(1, min(depth, 15))]
+        return {
+            "market": book["market"],
+            "asks": [{"price": float(u["ask_price"]), "size": float(u["ask_size"])} for u in units],
+            "bids": [{"price": float(u["bid_price"]), "size": float(u["bid_size"])} for u in units],
+        }
+
+    def list_daily_candles(
+        self,
+        market: str,
+        count: int,
+        to: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if count < 1 or count > 200:
+            raise ValueError("count must be between 1 and 200")
+        params: dict[str, str | int] = {"market": market, "count": count}
+        if to:
+            params["to"] = to
+        response = self._get("/v1/candles/days", params=params)
+        return [self._normalize_daily(item) for item in response.json()]
+
+    def _normalize_daily(self, item: dict[str, Any]) -> dict[str, Any]:
+        candle_time = datetime.fromisoformat(item["candle_date_time_utc"]).replace(
+            tzinfo=timezone.utc
+        )
+        return {
+            "market": item["market"],
+            "timeframe": "1d",
+            "candle_time": candle_time.isoformat(),
+            "open": float(item["opening_price"]),
+            "high": float(item["high_price"]),
+            "low": float(item["low_price"]),
+            "close": float(item["trade_price"]),
+            "volume": float(item["candle_acc_trade_volume"]),
+            "trade_price": float(item["candle_acc_trade_price"]),
+        }
+
     def _get(self, path: str, params: dict[str, str | int] | None = None) -> httpx.Response:
         response = self.http_client.get(f"{self.base_url}{path}", params=params)
         if response.status_code == 429:

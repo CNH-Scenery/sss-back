@@ -59,3 +59,49 @@ def test_latest_returns_the_generated_record(client: TestClient):
 
 def test_latest_404_when_empty(client: TestClient):
     assert client.get("/api/trading-code/latest").status_code == 404
+
+
+def _generate(client: TestClient) -> str:
+    resp = client.post(
+        "/api/trading-code/generate",
+        json={"prompt": "Buy when short MA is above long MA"},
+    )
+    assert resp.status_code == 200
+    return resp.json()["code_id"]
+
+
+def test_run_executes_and_persists(client: TestClient):
+    code_id = _generate(client)
+    resp = client.post(f"/api/trading-code/{code_id}/run")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["decision"] in {"buy", "reject"}
+    assert body["run_id"]
+    assert body["code_id"] == code_id
+
+
+def test_runs_history_lists_recent(client: TestClient):
+    code_id = _generate(client)
+    client.post(f"/api/trading-code/{code_id}/run")
+    client.post(f"/api/trading-code/{code_id}/run")
+    runs = client.get(f"/api/trading-code/{code_id}/runs")
+    assert runs.status_code == 200
+    assert len(runs.json()) >= 2
+
+
+def test_run_404_for_unknown_code(client: TestClient):
+    import uuid
+
+    resp = client.post(f"/api/trading-code/{uuid.uuid4()}/run")
+    assert resp.status_code == 404
+
+
+def test_stream_pushes_a_decision(client: TestClient):
+    code_id = _generate(client)
+    with client.websocket_connect(f"/api/trading-code/{code_id}/stream?interval=2") as ws:
+        msg = ws.receive_json()
+    assert msg["type"] == "decision"
+    assert msg["status"] == "ok"
+    assert msg["decision"] in {"buy", "reject"}
+    assert msg["run_id"]

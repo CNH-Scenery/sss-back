@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api import (
     auth,
     backtests,
+    chat,
     codegen,
     feedbacks,
     responses,
@@ -24,3 +25,4 @@ api_router.include_router(feedbacks.router)
 api_router.include_router(watchlists.router)
 api_router.include_router(signals.router)
 api_router.include_router(codegen.router)
+api_router.include_router(chat.router)

@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 from uuid import UUID
@@ -228,6 +229,17 @@ class CodeGenerateResponse(BaseModel):
     code: str
     verification: dict[str, Any]
     decision_sample: dict[str, Any] | None = None
+
+
+class TradingCodeRunResponse(BaseModel):
+    """One execution of a stored trading-code script."""
+
+    run_id: str
+    code_id: str
+    status: str  # "ok" | "error"
+    decision: str | None = None  # "buy" | "reject"
+    error: str | None = None
+    executed_at: datetime
 
 
 class SignalListResponse(BaseModel):

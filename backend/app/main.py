@@ -32,9 +32,16 @@ allowed_origins = [
     for origin in os.getenv("CORS_ALLOWED_ORIGINS", DEFAULT_CORS_ALLOWED_ORIGINS).split(",")
     if origin.strip()
 ]
+# Allow any localhost / 127.0.0.1 port in dev so the frontend port can change
+# without editing CORS config. Override with CORS_ALLOWED_ORIGIN_REGEX in prod.
+allowed_origin_regex = os.getenv(
+    "CORS_ALLOWED_ORIGIN_REGEX",
+    r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
+    allow_origin_regex=allowed_origin_regex,
     allow_methods=["*"],
     allow_headers=["*"],
 )

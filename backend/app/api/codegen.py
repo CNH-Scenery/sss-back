@@ -1,17 +1,25 @@
+import asyncio
 import json
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, StreamingResponse
 from sqlmodel import Session, select
 
 from app.db import get_session, seed_anonymous_user
-from app.models import GeneratedTradingCode
-from app.schemas import CodeGenerateRequest, CodeGenerateResponse
+from app.models import GeneratedTradingCode, TradingCodeRun
+from app.schemas import CodeGenerateRequest, CodeGenerateResponse, TradingCodeRunResponse
 from app.services.code_harness import CodeHarness
+from app.services.code_runner import run_once
 
 router = APIRouter(prefix="/trading-code", tags=["TradingCode API"])
+
+# Streaming cadence bounds (seconds). 15m candles only change every 15 min, and Upbit
+# rate-limits public endpoints, so default to 15s and clamp to a sane range.
+STREAM_INTERVAL_DEFAULT = 15
+STREAM_INTERVAL_MIN = 1
+STREAM_INTERVAL_MAX = 3600
 
 _PLAYGROUND_HTML = Path(__file__).resolve().parent.parent / "static" / "codegen_playground.html"
 
@@ -121,3 +129,107 @@ def _to_response(record: GeneratedTradingCode, decision_sample=None) -> CodeGene
         verification=record.verification_json,
         decision_sample=decision_sample,
     )
+
+
+# --- Execution: run the stored script and get a buy/reject decision ---------------
+
+
+def _load_owned(session: Session, code_id: UUID) -> GeneratedTradingCode:
+    user = seed_anonymous_user(session)
+    record = session.get(GeneratedTradingCode, code_id)
+    if record is None or record.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Generated trading code not found")
+    return record
+
+
+def _persist_run(session: Session, code_id: UUID, user_id: UUID, outcome) -> TradingCodeRun:
+    run = TradingCodeRun(
+        code_id=code_id,
+        user_id=user_id,
+        status=outcome.status,
+        decision=outcome.decision,
+        stdout=(outcome.stdout or "")[:4000],
+        error=outcome.error,
+    )
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+    return run
+
+
+def _run_to_response(run: TradingCodeRun) -> TradingCodeRunResponse:
+    return TradingCodeRunResponse(
+        run_id=str(run.id),
+        code_id=str(run.code_id),
+        status=run.status,
+        decision=run.decision,
+        error=run.error,
+        executed_at=run.executed_at,
+    )
+
+
+@router.post("/{code_id}/run", response_model=TradingCodeRunResponse)
+def run_trading_code(
+    code_id: UUID, session: Session = Depends(get_session)
+) -> TradingCodeRunResponse:
+    """Execute the stored script once and return + persist the buy/reject decision."""
+    record = _load_owned(session, code_id)
+    if record.status != "passed":
+        raise HTTPException(status_code=409, detail="code did not pass verification and cannot be run")
+    outcome = run_once(record.code)
+    run = _persist_run(session, record.id, record.user_id, outcome)
+    return _run_to_response(run)
+
+
+@router.get("/{code_id}/runs", response_model=list[TradingCodeRunResponse])
+def list_trading_code_runs(
+    code_id: UUID, limit: int = 20, session: Session = Depends(get_session)
+) -> list[TradingCodeRunResponse]:
+    record = _load_owned(session, code_id)
+    runs = session.exec(
+        select(TradingCodeRun)
+        .where(TradingCodeRun.code_id == record.id)
+        .order_by(TradingCodeRun.executed_at.desc())
+        .limit(limit)
+    ).all()
+    return [_run_to_response(run) for run in runs]
+
+
+@router.websocket("/{code_id}/stream")
+async def stream_trading_code(
+    websocket: WebSocket, code_id: UUID, session: Session = Depends(get_session)
+) -> None:
+    """Run the stored script on an interval and push each decision to the client.
+
+    Query params: interval (seconds, default 15). Each tick sends a JSON message
+    {type:"decision", run_id, code_id, status, decision, error, executed_at}.
+    """
+    await websocket.accept()
+    try:
+        record = _load_owned(session, code_id)
+    except HTTPException as exc:
+        await websocket.send_json({"type": "error", "error": exc.detail})
+        await websocket.close()
+        return
+    if record.status != "passed":
+        await websocket.send_json({"type": "error", "error": "code did not pass verification and cannot be run"})
+        await websocket.close()
+        return
+
+    raw = websocket.query_params.get("interval", str(STREAM_INTERVAL_DEFAULT))
+    try:
+        interval = max(STREAM_INTERVAL_MIN, min(STREAM_INTERVAL_MAX, int(float(raw))))
+    except ValueError:
+        interval = STREAM_INTERVAL_DEFAULT
+
+    code, rec_id, user_id = record.code, record.id, record.user_id
+    try:
+        while True:
+            outcome = await asyncio.to_thread(run_once, code)
+            run = _persist_run(session, rec_id, user_id, outcome)
+            payload = _run_to_response(run).model_dump(mode="json")
+            payload["type"] = "decision"
+            await websocket.send_json(payload)
+            await asyncio.sleep(interval)
+    except WebSocketDisconnect:
+        return
