@@ -77,8 +77,73 @@ def test_list_minute_candles_encodes_to_parameter_and_normalizes_fields():
 def test_list_minute_candles_rejects_unsupported_unit():
     client = UpbitClient(http_client=httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200))))
 
-    with pytest.raises(ValueError, match="Only 15m and 60m"):
-        client.list_minute_candles(market="KRW-BTC", unit=30, count=1)
+    with pytest.raises(ValueError, match="unsupported minute"):
+        client.list_minute_candles(market="KRW-BTC", unit=2, count=1)
+
+
+def test_list_second_candles_normalizes_fields():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/candles/seconds"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "market": "KRW-BTC",
+                    "candle_date_time_utc": "2026-06-28T03:15:09",
+                    "opening_price": 100.0,
+                    "high_price": 101.0,
+                    "low_price": 99.0,
+                    "trade_price": 100.5,
+                    "candle_acc_trade_volume": 1.5,
+                    "candle_acc_trade_price": 150.0,
+                }
+            ],
+        )
+
+    client = UpbitClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    assert client.list_second_candles(market="KRW-BTC", count=1) == [
+        {
+            "market": "KRW-BTC",
+            "timeframe": "1s",
+            "candle_time": "2026-06-28T03:15:09+00:00",
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.5,
+            "volume": 1.5,
+            "trade_price": 150.0,
+        }
+    ]
+
+
+def test_list_week_month_year_candles_use_native_upbit_endpoints():
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "market": "KRW-BTC",
+                    "candle_date_time_utc": "2026-06-28T00:00:00",
+                    "opening_price": 100.0,
+                    "high_price": 120.0,
+                    "low_price": 90.0,
+                    "trade_price": 110.0,
+                    "candle_acc_trade_volume": 2.0,
+                    "candle_acc_trade_price": 220.0,
+                }
+            ],
+        )
+
+    client = UpbitClient(http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    assert client.list_week_candles("KRW-BTC", 1)[0]["timeframe"] == "1w"
+    assert client.list_month_candles("KRW-BTC", 1)[0]["timeframe"] == "1mo"
+    assert client.list_year_candles("KRW-BTC", 1)[0]["timeframe"] == "1y"
+    assert paths == ["/v1/candles/weeks", "/v1/candles/months", "/v1/candles/years"]
 
 
 def test_rate_limit_response_raises_next_tick_retry_error():

@@ -175,13 +175,60 @@ class StrategyGenerateResponse(BaseModel):
     summary: str
 
 
+class FrontendStrategyParams(BaseModel):
+    rsiBuy: float = 42
+    volBuy: float = 1.05
+    rsiSell: float = 60
+    pnlTake: float = 10
+    pnlStop: float = -6
+
+
 class BacktestRunRequest(BaseModel):
-    strategy_id: UUID
+    strategy_id: UUID | None = None
     market: str
-    timeframe: str
-    period_start: str
-    period_end: str
-    initial_cash: float
+    timeframe: str = "1d"
+    period_start: str | None = None
+    period_end: str | None = None
+    initial_cash: float = 1
+    strategy_params: FrontendStrategyParams = Field(default_factory=FrontendStrategyParams)
+
+
+class BacktestRunResponse(BaseModel):
+    backtest: dict[str, Any]
+    chartCandles: list[dict[str, Any]] = Field(default_factory=list)
+    source: str = "backend-upbit"
+
+
+class MarketCandleResponse(BaseModel):
+    market: str
+    source: str
+    candles: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class MonitorPosition(BaseModel):
+    holding: bool = False
+    entry: float = 0
+
+
+class MonitorRunRequest(BaseModel):
+    market: str
+    strategy_params: FrontendStrategyParams = Field(default_factory=FrontendStrategyParams)
+    position: MonitorPosition = Field(default_factory=MonitorPosition)
+    unit: int = 1
+    count: int = Field(default=120, ge=20, le=20000)
+
+
+class MonitorRunResponse(BaseModel):
+    market: str
+    price: float
+    signal: str
+    signalReason: str
+    features: dict[str, Any] = Field(default_factory=dict)
+    candles: list[dict[str, Any]] = Field(default_factory=list)
+    lastCandleTime: str = ""
+    position: MonitorPosition
+    fired: dict[str, Any] | None = None
+    source: str = "backend-upbit"
 
 
 class FeedbackCreate(BaseModel):
