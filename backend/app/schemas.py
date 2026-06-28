@@ -94,6 +94,31 @@ class StrategyGenerateRequest(BaseModel):
     context_id: UUID
 
 
+class StrategyRule(BaseModel):
+    feature: str
+    operator: str
+    threshold: float | None = Field(default=None, ge=0)
+    lower: float | None = Field(default=None, ge=0)
+    upper: float | None = Field(default=None, ge=0)
+    weight: float = Field(gt=0, le=1)
+
+
+class StrategyRisk(BaseModel):
+    stop_loss_pct: float = Field(gt=0, le=0.2)
+    take_profit_pct: float = Field(gt=0, le=0.5)
+    max_daily_entries: int = Field(ge=1, le=20)
+
+
+class StrategyJSON(BaseModel):
+    strategy_name: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    timeframe: str = Field(min_length=1)
+    entry_threshold: float = Field(ge=0, le=1)
+    position_size: float = Field(gt=0, le=1)
+    rules: list[StrategyRule] = Field(min_length=1)
+    risk: StrategyRisk
+
+
 class StrategyGenerateResponse(BaseModel):
     strategy_id: str | None = None
     version: int | None = None

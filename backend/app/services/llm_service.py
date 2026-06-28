@@ -24,6 +24,7 @@ SIGNAL_LABELS = {
     "price_return_n": "단기 수익률",
     "support_break": "지지선 이탈",
 }
+SIGNAL_TO_FEATURE = {label: feature for feature, label in SIGNAL_LABELS.items()}
 
 
 class LLMService:
@@ -57,6 +58,36 @@ class LLMService:
                 "maximum": round(max(confidence_values), 3),
                 "band": self._confidence_band(average_confidence),
                 "prompt_char_count": float(len(prompt)),
+            },
+        }
+
+    def generate_strategy(self, twin_context) -> dict[str, Any]:
+        context_json = twin_context.context_json or {}
+        uncertainty_json = twin_context.uncertainty_json or {}
+        important_signals = context_json.get("important_signals", [])
+        uncertainty_items = uncertainty_json.get("items", [])
+        selected_features = self._strategy_features(important_signals)
+        weight = round(min(1.0, 0.9 / len(selected_features)), 2)
+
+        return {
+            "strategy_name": "CoinTwin Confirmation Strategy",
+            "summary": f"{twin_context.style_summary} 핵심 신호 확인 후 제한적으로 진입합니다.",
+            "timeframe": "15m",
+            "entry_threshold": 0.65,
+            "position_size": 0.2 if len(uncertainty_items) >= 3 else 0.25,
+            "rules": [
+                {
+                    "feature": feature,
+                    "operator": self._strategy_operator(feature),
+                    "threshold": self._strategy_threshold(feature),
+                    "weight": weight,
+                }
+                for feature in selected_features
+            ],
+            "risk": {
+                "stop_loss_pct": 0.03,
+                "take_profit_pct": 0.06,
+                "max_daily_entries": 3,
             },
         }
 
@@ -138,3 +169,40 @@ class LLMService:
     def _unique_or_default(self, items: list[str], default: str) -> list[str]:
         unique_items = list(dict.fromkeys(item for item in items if item))
         return unique_items or [default]
+
+    def _strategy_features(self, important_signals: list[str]) -> list[str]:
+        features = []
+        for signal in important_signals:
+            feature = SIGNAL_TO_FEATURE.get(signal)
+            if feature and feature not in features:
+                features.append(feature)
+        for fallback in ["volume_ratio_n", "recent_high_breakout"]:
+            if fallback not in features:
+                features.append(fallback)
+            if len(features) >= 3:
+                break
+        return features[:3]
+
+    def _strategy_operator(self, feature: str) -> str:
+        if feature in {"upper_wick_ratio", "volatility_n", "drawdown_from_recent_high"}:
+            return "lte"
+        return "gte"
+
+    def _strategy_threshold(self, feature: str) -> float:
+        thresholds = {
+            "volume_ratio_n": 1.2,
+            "recent_high_breakout": 0.6,
+            "upper_wick_ratio": 0.45,
+            "rapid_price_rise": 0.7,
+            "pullback_after_breakout": 0.5,
+            "volume_fading": 0.6,
+            "lower_wick_ratio": 0.35,
+            "drawdown_from_recent_high": 0.08,
+            "moving_average_slope": 0.2,
+            "rsi_14": 70,
+            "volatility_n": 0.8,
+            "recent_low_breakdown": 0.4,
+            "price_return_n": 0.01,
+            "support_break": 0.4,
+        }
+        return thresholds.get(feature, 0.5)
