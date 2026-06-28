@@ -1,17 +1,18 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
-import pytest
-
 from app.models import CandleCache
-from app.services.feature_engine import FeatureEngine, REQUIRED_FEATURE_COLUMNS
+from app.services.code_contract import FEATURE_KEYS
+from app.services.feature_engine import FeatureEngine
+
+_BASE = datetime(2026, 6, 28, 0, 0)
 
 
 def candle(index: int, open_price: str, high: str, low: str, close: str, volume: str) -> CandleCache:
     return CandleCache(
         market="KRW-BTC",
         timeframe="15m",
-        candle_time=datetime(2026, 6, 28, 3, index * 15),
+        candle_time=_BASE + timedelta(minutes=15 * index),
         open=Decimal(open_price),
         high=Decimal(high),
         low=Decimal(low),
@@ -21,25 +22,48 @@ def candle(index: int, open_price: str, high: str, low: str, close: str, volume:
     )
 
 
-def test_feature_engine_returns_required_columns_and_sorts_by_time():
-    candles = [
-        candle(2, "102", "106", "101", "105", "14"),
-        candle(0, "100", "105", "98", "101", "10"),
-        candle(1, "101", "104", "99", "102", "12"),
-        candle(3, "105", "108", "103", "104", "13"),
-    ]
+def _series(n: int = 40) -> list[CandleCache]:
+    out = []
+    price = 100.0
+    for i in range(n):
+        price *= 1.01 if i % 2 == 0 else 0.995
+        out.append(candle(i, f"{price:.2f}", f"{price * 1.01:.2f}", f"{price * 0.99:.2f}", f"{price:.2f}", str(10 + i)))
+    return out
 
-    frame = FeatureEngine.build_frame(candles, lookback=3)
+
+def test_build_frame_emits_canonical_features_sorted_by_time():
+    candles = _series(40)
+    # shuffle order to confirm sorting
+    frame = FeatureEngine.build_frame(list(reversed(candles)))
 
     assert list(frame["candle_time"]) == sorted(frame["candle_time"])
-    assert set(REQUIRED_FEATURE_COLUMNS).issubset(frame.columns)
-    assert frame.loc[1, "price_return_n"] == pytest.approx((102 - 101) / 101)
-    assert frame.loc[0, "upper_wick_ratio"] == pytest.approx((105 - 101) / (105 - 98))
-    assert frame.loc[0, "lower_wick_ratio"] == pytest.approx((100 - 98) / (105 - 98))
+    assert set(FEATURE_KEYS).issubset(frame.columns)
+    # rsi bounded, ma_align is one of the three labels
+    assert frame["rsi14"].between(0, 100).all()
+    assert set(frame["ma_align"].unique()).issubset({"정배열", "역배열", "혼조"})
 
 
-def test_feature_engine_returns_empty_frame_with_required_columns():
+def test_latest_features_returns_all_keys_and_is_json_safe():
+    feats = FeatureEngine.latest_features(_series(40))
+    assert set(feats.keys()) == set(FEATURE_KEYS)
+    assert isinstance(feats["ma_align"], str)
+    # numeric features are float or None (never NaN)
+    for key in FEATURE_KEYS:
+        if key == "ma_align":
+            continue
+        assert feats[key] is None or isinstance(feats[key], (int, float))
+
+
+def test_feature_rows_include_ohlcv_and_features():
+    rows = FeatureEngine.feature_rows(_series(30))
+    assert len(rows) == 30
+    sample = rows[-1]
+    for key in ("candle_time", "open", "high", "low", "close", "volume"):
+        assert key in sample
+    assert set(FEATURE_KEYS).issubset(sample.keys())
+
+
+def test_empty_candles_returns_empty_frame():
     frame = FeatureEngine.build_frame([])
-
     assert frame.empty
-    assert list(frame.columns) == REQUIRED_FEATURE_COLUMNS
+    assert FeatureEngine.latest_features([]) == {}

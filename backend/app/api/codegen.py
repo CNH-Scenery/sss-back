@@ -10,8 +10,10 @@ from sqlmodel import Session, select
 from app.db import get_session, seed_anonymous_user
 from app.models import GeneratedTradingCode, TradingCodeRun
 from app.schemas import CodeGenerateRequest, CodeGenerateResponse, TradingCodeRunResponse
+from app.services import backtester
 from app.services.code_harness import CodeHarness
-from app.services.code_runner import run_once
+from app.services.code_runner import RunOutcome, run_once
+from app.services.feature_engine import FeatureEngine
 
 router = APIRouter(prefix="/trading-code", tags=["TradingCode API"])
 
@@ -131,7 +133,16 @@ def _to_response(record: GeneratedTradingCode, decision_sample=None) -> CodeGene
     )
 
 
-# --- Execution: run the stored script and get a buy/reject decision ---------------
+# --- Live monitoring: compute features now, run decide(), get a BUY/SELL/HOLD --------
+
+_LIVE_LOOKBACK = 150
+_SEVERITY = {"BUY": "info", "SELL": "warning", "HOLD": "info"}
+
+
+def compute_features(market: str, timeframe: str) -> dict:
+    """Latest-bar features for a market (overridable in tests)."""
+    candles = backtester.fetch_candles(market=market, timeframe=timeframe, lookback=_LIVE_LOOKBACK)
+    return FeatureEngine.latest_features(candles)
 
 
 def _load_owned(session: Session, code_id: UUID) -> GeneratedTradingCode:
@@ -142,13 +153,20 @@ def _load_owned(session: Session, code_id: UUID) -> GeneratedTradingCode:
     return record
 
 
-def _persist_run(session: Session, code_id: UUID, user_id: UUID, outcome) -> TradingCodeRun:
+def _evaluate_live(code: str, market: str, timeframe: str) -> tuple[RunOutcome, float | None]:
+    features = compute_features(market, timeframe)
+    outcome = run_once(code, features, position=None)
+    return outcome, features.get("close")
+
+
+def _persist_run(session: Session, code_id: UUID, user_id: UUID, outcome: RunOutcome) -> TradingCodeRun:
+    decision = outcome.decision or {}
     run = TradingCodeRun(
         code_id=code_id,
         user_id=user_id,
         status=outcome.status,
-        decision=outcome.decision,
-        stdout=(outcome.stdout or "")[:4000],
+        decision=decision.get("action"),
+        stdout=(decision.get("reason") or "")[:4000],
         error=outcome.error,
     )
     session.add(run)
@@ -170,13 +188,16 @@ def _run_to_response(run: TradingCodeRun) -> TradingCodeRunResponse:
 
 @router.post("/{code_id}/run", response_model=TradingCodeRunResponse)
 def run_trading_code(
-    code_id: UUID, session: Session = Depends(get_session)
+    code_id: UUID,
+    market: str = "KRW-BTC",
+    timeframe: str = "15m",
+    session: Session = Depends(get_session),
 ) -> TradingCodeRunResponse:
-    """Execute the stored script once and return + persist the buy/reject decision."""
+    """Compute the latest features for `market` and run decide() once (BUY/SELL/HOLD)."""
     record = _load_owned(session, code_id)
     if record.status != "passed":
         raise HTTPException(status_code=409, detail="code did not pass verification and cannot be run")
-    outcome = run_once(record.code)
+    outcome, _ = _evaluate_live(record.code, market, timeframe)
     run = _persist_run(session, record.id, record.user_id, outcome)
     return _run_to_response(run)
 
@@ -199,10 +220,9 @@ def list_trading_code_runs(
 async def stream_trading_code(
     websocket: WebSocket, code_id: UUID, session: Session = Depends(get_session)
 ) -> None:
-    """Run the stored script on an interval and push each decision to the client.
-
-    Query params: interval (seconds, default 15). Each tick sends a JSON message
-    {type:"decision", run_id, code_id, status, decision, error, executed_at}.
+    """Real-time monitor: every `interval`s, compute features -> decide() -> push an
+    alert message {type:"alert", action, market, price, reason, severity, ts, decision}.
+    Query params: market (KRW-BTC), timeframe (15m), interval (seconds, default 15).
     """
     await websocket.accept()
     try:
@@ -216,20 +236,33 @@ async def stream_trading_code(
         await websocket.close()
         return
 
-    raw = websocket.query_params.get("interval", str(STREAM_INTERVAL_DEFAULT))
+    qp = websocket.query_params
+    market = qp.get("market", "KRW-BTC")
+    timeframe = qp.get("timeframe", "15m")
     try:
-        interval = max(STREAM_INTERVAL_MIN, min(STREAM_INTERVAL_MAX, int(float(raw))))
+        interval = max(STREAM_INTERVAL_MIN, min(STREAM_INTERVAL_MAX, int(float(qp.get("interval", STREAM_INTERVAL_DEFAULT)))))
     except ValueError:
         interval = STREAM_INTERVAL_DEFAULT
 
     code, rec_id, user_id = record.code, record.id, record.user_id
     try:
         while True:
-            outcome = await asyncio.to_thread(run_once, code)
+            outcome, price = await asyncio.to_thread(_evaluate_live, code, market, timeframe)
             run = _persist_run(session, rec_id, user_id, outcome)
-            payload = _run_to_response(run).model_dump(mode="json")
-            payload["type"] = "decision"
-            await websocket.send_json(payload)
+            decision = outcome.decision or {}
+            action = decision.get("action") or ("ERROR" if outcome.status == "error" else "HOLD")
+            await websocket.send_json({
+                "type": "alert",
+                "action": action,
+                "market": market,
+                "price": price,
+                "reason": decision.get("reason") or outcome.error or "",
+                "severity": _SEVERITY.get(action, "info"),
+                "ts": int(run.executed_at.timestamp() * 1000),
+                "run_id": str(run.id),
+                "status": outcome.status,
+                "decision": decision or None,
+            })
             await asyncio.sleep(interval)
     except WebSocketDisconnect:
         return

@@ -1,27 +1,34 @@
-"""Executes a stored trading-code script and reports its decision.
+"""Executes a stored `decide` function once on a given feature snapshot.
 
-Reuses the verifier's sandboxed runner (static allowlist + isolated subprocess) so
-running stored code is held to the same safety bar as generation. The decision is the
-buy/reject token the script prints to stdout.
+Used by the live monitor (run + WebSocket stream). Backtesting uses
+strategy_engine.backtest directly.
 """
 from dataclasses import dataclass
+from typing import Any
 
-from app.services.code_verifier import verify
+from pydantic import ValidationError
+
+from app.schemas import Decision
+from app.services import strategy_engine
 
 
 @dataclass
 class RunOutcome:
     status: str  # "ok" | "error"
-    decision: str | None  # "buy" | "reject" when status == "ok"
+    decision: dict[str, Any] | None  # full Decision dict when ok
     error: str | None
-    stdout: str
 
 
-def run_once(code: str) -> RunOutcome:
-    report = verify(code)
-    if report.passed:
-        decision = (report.decision_sample or {}).get("action")
-        return RunOutcome(status="ok", decision=decision, error=None, stdout=report.stdout)
+def run_once(code: str, features: dict[str, Any], position: dict[str, Any] | None = None) -> RunOutcome:
+    result = strategy_engine.evaluate(code, [{"features": features, "position": position}])
+    if "engine_error" in result:
+        return RunOutcome("error", None, result["engine_error"])
 
-    detail = "; ".join(report.errors) if report.errors else report.stage
-    return RunOutcome(status="error", decision=None, error=f"[{report.stage}] {detail}", stdout=report.stdout)
+    probe = result.get("results", [{}])[0]
+    if not probe.get("ok"):
+        return RunOutcome("error", None, probe.get("error", "decide raised"))
+    try:
+        decision = Decision.model_validate(probe["decision"])
+    except ValidationError as exc:
+        return RunOutcome("error", None, f"decision does not match contract: {exc}")
+    return RunOutcome("ok", decision.model_dump(), None)

@@ -242,7 +242,23 @@ class TradingCodeRun(SQLModel, table=True):
     code_id: UUID = Field(foreign_key="generated_trading_codes.id", index=True)
     user_id: UUID = Field(foreign_key="users.id")
     status: str  # "ok" | "error"
-    decision: str | None = None  # "buy" | "reject"
+    decision: str | None = None  # "BUY" | "SELL" | "HOLD"
     stdout: str | None = None
     error: str | None = None
     executed_at: datetime = Field(default_factory=utc_now)
+
+
+class CodeBacktestRun(SQLModel, table=True):
+    __tablename__ = "code_backtest_runs"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    code_id: UUID = Field(foreign_key="generated_trading_codes.id", index=True)
+    user_id: UUID = Field(foreign_key="users.id")
+    market: str
+    timeframe: str
+    period_start: str | None = None
+    period_end: str | None = None
+    initial_cash: float
+    metrics_json: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    result_json: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=utc_now)

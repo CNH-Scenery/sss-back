@@ -11,35 +11,27 @@ from app.services.code_contract import SYSTEM_PROMPT
 
 DEFAULT_MODEL = "claude-opus-4-8"
 
-# A known-good script returned in fixture mode. It satisfies the contract: runs with
-# no arguments, fetches Upbit candles via httpx, and prints exactly "buy" or "reject".
+# A known-good `decide` returned in fixture mode. Satisfies the contract: pure,
+# null-safe (returns HOLD on missing data), returns BUY/SELL/HOLD.
 FIXTURE_CODE = '''\
-import httpx
-
-
-def _decide() -> str:
-    url = "https://api.upbit.com/v1/candles/minutes/15"
+def decide(features: dict, position: dict | None = None) -> dict:
     try:
-        with httpx.Client(timeout=10) as client:
-            resp = client.get(url, params={"market": "KRW-BTC", "count": 50})
-            resp.raise_for_status()
-            candles = resp.json()
+        ma5 = features.get("ma5")
+        ma20 = features.get("ma20")
+        rsi = features.get("rsi14")
+        if ma5 is None or ma20 is None or rsi is None:
+            return {"action": "HOLD", "size_ratio": 0.0, "reason": "데이터 부족", "indicators": {}}
+
+        in_position = bool(position and position.get("in_position"))
+        ind = {"ma5": ma5, "ma20": ma20, "rsi14": rsi}
+
+        if not in_position and ma5 > ma20 and rsi < 70:
+            return {"action": "BUY", "size_ratio": 0.3, "reason": "단기 MA 상향 + 과열 아님", "indicators": ind}
+        if in_position and (ma5 < ma20 or rsi > 75):
+            return {"action": "SELL", "size_ratio": 1.0, "reason": "추세 약화 또는 과열", "indicators": ind}
+        return {"action": "HOLD", "size_ratio": 0.0, "reason": "관망", "indicators": ind}
     except Exception:
-        return "reject"
-
-    closes = [float(c["trade_price"]) for c in candles]
-    if len(closes) < 20:
-        return "reject"
-
-    # Upbit returns newest-first; reverse to chronological order.
-    closes = closes[::-1]
-    short_ma = sum(closes[-5:]) / 5
-    long_ma = sum(closes[-20:]) / 20
-    return "buy" if short_ma > long_ma else "reject"
-
-
-if __name__ == "__main__":
-    print(_decide())
+        return {"action": "HOLD", "size_ratio": 0.0, "reason": "오류", "indicators": {}}
 '''
 
 
