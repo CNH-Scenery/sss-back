@@ -6,6 +6,7 @@ from app.api import (
     chat,
     codegen,
     feedbacks,
+    market_data,
     responses,
     scenarios,
     signals,
@@ -26,3 +27,4 @@ api_router.include_router(watchlists.router)
 api_router.include_router(signals.router)
 api_router.include_router(codegen.router)
 api_router.include_router(chat.router)
+api_router.include_router(market_data.router)

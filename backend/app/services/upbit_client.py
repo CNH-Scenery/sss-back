@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 
-SUPPORTED_MINUTE_UNITS = {15, 60}
+SUPPORTED_MINUTE_UNITS = {1, 3, 5, 10, 15, 30, 60, 240}
 
 
 @dataclass
@@ -55,7 +55,7 @@ class UpbitClient:
         to: str | None = None,
     ) -> list[dict[str, Any]]:
         if unit not in SUPPORTED_MINUTE_UNITS:
-            raise ValueError("Only 15m and 60m candles are supported")
+            raise ValueError("unsupported minute candle unit")
         if count < 1 or count > 200:
             raise ValueError("count must be between 1 and 200")
 
@@ -109,15 +109,69 @@ class UpbitClient:
         if to:
             params["to"] = to
         response = self._get("/v1/candles/days", params=params)
-        return [self._normalize_daily(item) for item in response.json()]
+        return [self._normalize_period(item, "1d") for item in response.json()]
 
-    def _normalize_daily(self, item: dict[str, Any]) -> dict[str, Any]:
+    def list_week_candles(
+        self,
+        market: str,
+        count: int,
+        to: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._list_period_candles("weeks", "1w", market, count, to)
+
+    def list_month_candles(
+        self,
+        market: str,
+        count: int,
+        to: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._list_period_candles("months", "1mo", market, count, to)
+
+    def list_year_candles(
+        self,
+        market: str,
+        count: int,
+        to: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._list_period_candles("years", "1y", market, count, to)
+
+    def list_second_candles(
+        self,
+        market: str,
+        count: int,
+        to: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if count < 1 or count > 200:
+            raise ValueError("count must be between 1 and 200")
+        params: dict[str, str | int] = {"market": market, "count": count}
+        if to:
+            params["to"] = to
+        response = self._get("/v1/candles/seconds", params=params)
+        return [self._normalize_candle(item, 1, timeframe="1s") for item in response.json()]
+
+    def _list_period_candles(
+        self,
+        endpoint: str,
+        timeframe: str,
+        market: str,
+        count: int,
+        to: str | None,
+    ) -> list[dict[str, Any]]:
+        if count < 1 or count > 200:
+            raise ValueError("count must be between 1 and 200")
+        params: dict[str, str | int] = {"market": market, "count": count}
+        if to:
+            params["to"] = to
+        response = self._get(f"/v1/candles/{endpoint}", params=params)
+        return [self._normalize_period(item, timeframe) for item in response.json()]
+
+    def _normalize_period(self, item: dict[str, Any], timeframe: str) -> dict[str, Any]:
         candle_time = datetime.fromisoformat(item["candle_date_time_utc"]).replace(
             tzinfo=timezone.utc
         )
         return {
             "market": item["market"],
-            "timeframe": "1d",
+            "timeframe": timeframe,
             "candle_time": candle_time.isoformat(),
             "open": float(item["opening_price"]),
             "high": float(item["high_price"]),
@@ -138,13 +192,15 @@ class UpbitClient:
         response.raise_for_status()
         return response
 
-    def _normalize_candle(self, item: dict[str, Any], unit: int) -> dict[str, Any]:
+    def _normalize_candle(
+        self, item: dict[str, Any], unit: int, timeframe: str | None = None
+    ) -> dict[str, Any]:
         candle_time = datetime.fromisoformat(item["candle_date_time_utc"]).replace(
             tzinfo=timezone.utc
         )
         return {
             "market": item["market"],
-            "timeframe": f"{unit}m",
+            "timeframe": timeframe or f"{unit}m",
             "candle_time": candle_time.isoformat(),
             "open": float(item["opening_price"]),
             "high": float(item["high_price"]),
