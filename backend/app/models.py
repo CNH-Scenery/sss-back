@@ -226,6 +226,8 @@ class GeneratedTradingCode(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     user_id: UUID = Field(foreign_key="users.id")
+    market: str = "KRW-BTC"
+    timeframe: str = "15m"
     prompt: str
     code: str
     status: str  # "passed" | "failed"
