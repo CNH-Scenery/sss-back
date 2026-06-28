@@ -1,28 +1,27 @@
-"""Verifies LLM-generated trading code: static analysis + sandboxed execution.
+"""Verifies LLM-generated `decide` functions: static analysis + contract probes.
 
-Two stages:
-  static_check  — parse the AST, enforce the import allowlist, and reject forbidden
-                  symbols.
-  runtime_check — run the script in an isolated subprocess (`python -I`) with a CPU
-                  limit and wall-clock timeout, NO arguments, and confirm it prints
-                  exactly one decision token ("buy" or "reject") to stdout.
-
-Network access (httpx) is intentionally allowed per the data-access decision, so this
-is robustness verification, not a full security sandbox.
+  static_check  — AST: enforce the import allowlist, reject forbidden symbols, and
+                  confirm a top-level `decide` function is defined.
+  runtime_check — run decide() in the isolated engine against (a) a full feature dict
+                  and (b) an all-None feature dict; BOTH must return a valid
+                  BUY/SELL/HOLD Decision without raising (null-safety is enforced here).
 """
 import ast
-import os
-import subprocess
-import sys
-import tempfile
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
-from app.services.code_contract import ALLOWED_IMPORTS, DECISIONS, FORBIDDEN_NAMES
+from pydantic import ValidationError
 
-RUNTIME_TIMEOUT_SECONDS = 20
-CPU_LIMIT_SECONDS = 15
+from app.schemas import TradingDecision
+from app.services import strategy_engine
+from app.services.code_contract import (
+    ALLOWED_IMPORTS,
+    ENTRYPOINT_NAME,
+    FORBIDDEN_NAMES,
+    NULL_FEATURES,
+    SAMPLE_FEATURES,
+    SAMPLE_POSITION,
+)
 
 
 @dataclass
@@ -52,87 +51,58 @@ def static_check(code: str) -> VerificationReport:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                top = alias.name.split(".")[0]
-                if top not in ALLOWED_IMPORTS:
+                if alias.name.split(".")[0] not in ALLOWED_IMPORTS:
                     errors.append(f"import '{alias.name}' is not in the allowlist")
         elif isinstance(node, ast.ImportFrom):
-            top = (node.module or "").split(".")[0]
-            if top not in ALLOWED_IMPORTS:
+            if (node.module or "").split(".")[0] not in ALLOWED_IMPORTS:
                 errors.append(f"import from '{node.module}' is not in the allowlist")
         elif isinstance(node, ast.Name) and node.id in FORBIDDEN_NAMES:
             errors.append(f"forbidden name '{node.id}' is used")
         elif isinstance(node, ast.Attribute) and node.attr in FORBIDDEN_NAMES:
             errors.append(f"forbidden attribute '.{node.attr}' is used")
 
-    # De-duplicate while preserving order.
+    if not any(isinstance(n, ast.FunctionDef) and n.name == ENTRYPOINT_NAME for n in tree.body):
+        errors.append(f"module must define a top-level '{ENTRYPOINT_NAME}' function")
+
     errors = list(dict.fromkeys(errors))
     return VerificationReport(passed=not errors, stage="static", errors=errors)
 
 
-def _limit_resources() -> None:
-    try:
-        import resource
-
-        resource.setrlimit(resource.RLIMIT_CPU, (CPU_LIMIT_SECONDS, CPU_LIMIT_SECONDS))
-    except Exception:  # noqa: BLE001 - best effort; timeout is the hard backstop
-        pass
-
-
 def runtime_check(code: str) -> VerificationReport:
-    """Run the script with no arguments and confirm it prints exactly buy/reject."""
-    with tempfile.TemporaryDirectory() as tmp:
-        strategy_path = Path(tmp) / "strategy_script.py"
-        strategy_path.write_text(code, encoding="utf-8")
-        subprocess_kwargs = {}
-        if os.name != "nt":  # preexec_fn is POSIX-only
-            subprocess_kwargs["preexec_fn"] = _limit_resources
+    result = strategy_engine.evaluate(
+        code,
+        [
+            {"features": SAMPLE_FEATURES, "position": SAMPLE_POSITION},
+            {"features": NULL_FEATURES, "position": None},
+        ],
+    )
+    if "engine_error" in result:
+        return VerificationReport(False, "runtime", [result["engine_error"]])
 
+    results = result.get("results", [])
+    if len(results) != 2:
+        return VerificationReport(False, "runtime", ["engine did not return both probe results"])
+
+    errors: list[str] = []
+    decision_sample: dict[str, Any] | None = None
+    for label, probe in zip(("full-features", "null-features"), results):
+        if not probe.get("ok"):
+            errors.append(f"{label}: decide raised — {probe.get('error')}")
+            continue
         try:
-            proc = subprocess.run(
-                [sys.executable, "-I", str(strategy_path)],
-                capture_output=True,
-                text=True,
-                timeout=RUNTIME_TIMEOUT_SECONDS,
-                **subprocess_kwargs,
-            )
-        except subprocess.TimeoutExpired:
-            return VerificationReport(
-                False, "runtime", [f"execution exceeded {RUNTIME_TIMEOUT_SECONDS}s timeout"]
-            )
+            decision = TradingDecision.model_validate(probe["decision"])
+        except ValidationError as exc:
+            errors.append(f"{label}: decision does not match contract — {exc}")
+            continue
+        if label == "full-features":
+            decision_sample = decision.model_dump()
 
-        if proc.returncode != 0:
-            return VerificationReport(
-                False,
-                "runtime",
-                [f"process exited with code {proc.returncode}"],
-                stdout=proc.stderr or proc.stdout,
-            )
-
-        decision = _last_token(proc.stdout)
-        if decision not in DECISIONS:
-            return VerificationReport(
-                False,
-                "runtime",
-                [f"script must print exactly one of {list(DECISIONS)}; got: {decision!r}"],
-                stdout=proc.stdout,
-            )
-
-        return VerificationReport(
-            passed=True,
-            stage="ok",
-            decision_sample={"action": decision},
-            stdout=proc.stdout,
-        )
-
-
-def _last_token(stdout: str) -> str | None:
-    """The decision is the last non-empty line, lowercased and stripped."""
-    lines = [ln.strip() for ln in stdout.splitlines() if ln.strip()]
-    return lines[-1].lower() if lines else None
+    if errors:
+        return VerificationReport(False, "runtime", errors)
+    return VerificationReport(passed=True, stage="ok", decision_sample=decision_sample)
 
 
 def verify(code: str) -> VerificationReport:
-    """Run static then runtime checks; return the first failure or the runtime success."""
     static = static_check(code)
     if not static.passed:
         return static

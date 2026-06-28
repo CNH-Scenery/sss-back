@@ -21,9 +21,9 @@ services:
     environment:
       DATABASE_URL: ${BACKEND_DATABASE_URL:-postgresql+psycopg://cointwin:cointwin@postgres:5432/cointwin}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000}
-      LLM_API_KEY: ${LLM_API_KEY:-}
-      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.scenery.today/v1}
-      LLM_MODEL: ${LLM_MODEL:-codex-5.5-extrahigh}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CODEGEN_MODEL: ${CODEGEN_MODEL:-claude-opus-4-8}
+      CODEGEN_FIXTURE: ${CODEGEN_FIXTURE:-false}
     ports:
       - "8000:8000"
     depends_on:
@@ -35,9 +35,9 @@ services:
       context: ./backend-worker
     environment:
       DATABASE_URL: ${BACKEND_DATABASE_URL:-postgresql+psycopg://cointwin:cointwin@postgres:5432/cointwin}
-      LLM_API_KEY: ${LLM_API_KEY:-}
-      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.scenery.today/v1}
-      LLM_MODEL: ${LLM_MODEL:-codex-5.5-extrahigh}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CODEGEN_MODEL: ${CODEGEN_MODEL:-claude-opus-4-8}
+      CODEGEN_FIXTURE: ${CODEGEN_FIXTURE:-false}
     command: ["python", "worker.py", "--once"]
     depends_on:
       postgres:

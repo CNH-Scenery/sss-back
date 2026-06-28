@@ -175,6 +175,20 @@ class StrategyGenerateResponse(BaseModel):
     summary: str
 
 
+class FeedbackCreate(BaseModel):
+    target_type: str
+    target_id: UUID
+    feedback_type: FeedbackType
+    feedback_text: str | None = None
+
+
+class WatchlistCreate(BaseModel):
+    strategy_id: UUID
+    market: str
+    timeframe: str
+    cooldown_minutes: int = Field(ge=1, le=1440)
+
+
 class FrontendStrategyParams(BaseModel):
     rsiBuy: float = 42
     volBuy: float = 1.05
@@ -231,35 +245,58 @@ class MonitorRunResponse(BaseModel):
     source: str = "backend-upbit"
 
 
-class FeedbackCreate(BaseModel):
-    target_type: str
-    target_id: UUID
-    feedback_type: FeedbackType
-    feedback_text: str | None = None
-
-
-class WatchlistCreate(BaseModel):
-    strategy_id: UUID
-    market: str
-    timeframe: str
-    cooldown_minutes: int = Field(ge=1, le=1440)
-
-
 class TradingDecision(BaseModel):
-    """Contract the generated code must return when called (validated by the harness)."""
+    """The object returned by the generated decide(features, position) function.
+
+    The single canonical decision shape used across generation, live monitoring and
+    backtesting. action is normalized to upper-case BUY/SELL/HOLD.
+    """
 
     action: str
-    size_ratio: float = Field(ge=0, le=1)
+    size_ratio: float = Field(default=0.0, ge=0, le=1)
     reason: str = ""
     indicators: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("action")
     @classmethod
     def _action_allowed(cls, value: str) -> str:
-        allowed = {"buy", "sell", "hold"}
-        if value not in allowed:
-            raise ValueError(f"action must be one of {sorted(allowed)}")
-        return value
+        normalized = str(value).strip().upper()
+        if normalized not in {"BUY", "SELL", "HOLD"}:
+            raise ValueError("action must be one of ['BUY', 'SELL', 'HOLD']")
+        return normalized
+
+
+class CodeBacktestRequest(BaseModel):
+    code_id: UUID
+    market: str = "KRW-BTC"
+    timeframe: str = "1d"  # "1d" | "15m" | "60m"
+    start: str | None = None  # ISO date/datetime; if omitted, uses lookback
+    end: str | None = None
+    initial_cash: float = Field(default=1_000_000.0, gt=0)
+    lookback: int = Field(default=365, ge=10, le=2000)  # bars when start/end omitted
+
+
+class BacktestMetrics(BaseModel):
+    totalReturn: float
+    bhReturn: float
+    winRate: float
+    trades: int
+    mdd: float
+    vsBH: float
+
+
+class BacktestResultResponse(BaseModel):
+    backtest_run_id: str | None = None
+    code_id: str
+    market: str
+    timeframe: str
+    period_start: str | None = None
+    period_end: str | None = None
+    metrics: BacktestMetrics
+    eq: list[float] = Field(default_factory=list)       # normalized strategy equity (starts ~1.0)
+    bh: list[float] = Field(default_factory=list)        # normalized buy & hold curve
+    candles: list[dict[str, Any]] = Field(default_factory=list)  # [{t, o, h, l, c}] per bar
+    markers: list[dict[str, Any]] = Field(default_factory=list)  # [{i, type:"BUY"|"SELL"}]
 
 
 class CodeGenerateRequest(BaseModel):
